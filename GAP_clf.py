@@ -21,8 +21,11 @@ torch.autograd.set_detect_anomaly(True)
 
 # Training settings
 parser = argparse.ArgumentParser(description='generative adversarial perturbations')
-parser.add_argument('--imagenetTrain', type=str, default='/nfs01/data/imagenet-original/ILSVRC2012_img_train_caffemapping', help='ImageNet train root')
-parser.add_argument('--imagenetVal', type=str, default='/nfs01/data/imagenet-original/ILSVRC2012_img_val_caffemapping', help='ImageNet val root')
+parser.add_argument('--imagenetTrain', type=str,
+                    default='/nfs01/data/imagenet-original/ILSVRC2012_img_train_caffemapping',
+                    help='ImageNet train root')
+parser.add_argument('--imagenetVal', type=str,
+                    default='/nfs01/data/imagenet-original/ILSVRC2012_img_val_caffemapping', help='ImageNet val root')
 parser.add_argument('--batchSize', type=int, default=30, help='training batch size')
 parser.add_argument('--testBatchSize', type=int, default=16, help='testing batch size')
 parser.add_argument('--nEpochs', type=int, default=10, help='number of epochs to train for')
@@ -37,12 +40,15 @@ parser.add_argument('--MaxIterTest', type=int, default=160, help='Iterations in 
 parser.add_argument('--mag_in', type=float, default=10.0, help='l_inf magnitude of perturbation')
 parser.add_argument('--expname', type=str, default='tempname', help='experiment name, output folder')
 parser.add_argument('--checkpoint', type=str, default='', help='path to starting checkpoint')
-parser.add_argument('--foolmodel', type=str, default='incv3', help='model to fool: "incv3", "vgg16", or "vgg19"')
+parser.add_argument('--foolmodel', type=str,
+                    default='resent50', help='model to fool: "resent50", "incv3", "vgg16", or "vgg19"')
 parser.add_argument('--mode', type=str, default='train', help='mode: "train" or "test"')
 parser.add_argument('--perturbation_type', type=str, help='"universal" or "imdep" (image dependent)')
-parser.add_argument('--target', type=int, default=-1, help='target class: -1 if untargeted, 0..999 if targeted')
+parser.add_argument('--target', type=int,
+                    default=-1, help='target class: -1 if untargeted, 0..999 if targeted')
 parser.add_argument('--gpu_ids', help='gpu ids: e.g. 0 or 0,1 or 1,2.', type=str, default='0')
-parser.add_argument('--path_to_U_noise', type=str, default='', help='path to U_input_noise.txt (only needed for universal)')
+parser.add_argument('--path_to_U_noise', type=str,
+                    default='', help='path to U_input_noise.txt (only needed for universal)')
 parser.add_argument('--explicit_U', type=str, default='', help='Path to a universal perturbation to use')
 opt = parser.parse_args()
 
@@ -107,6 +113,8 @@ elif opt.foolmodel == 'vgg16':
     pretrained_clf = torchvision.models.vgg16(pretrained=True)
 elif opt.foolmodel == 'vgg19':
     pretrained_clf = torchvision.models.vgg19(pretrained=True)
+elif opt.foolmodel == 'resnet50':
+    pretrained_clf = torchvision.models.resnet50(pretrained=True)
 
 pretrained_clf = pretrained_clf.cuda(gpulist[0])
 
@@ -124,12 +132,15 @@ if not opt.explicit_U:
 
     # resume from checkpoint if specified
     if opt.checkpoint:
-        if os.path.isfile(opt.checkpoint):
-            print("=> loading checkpoint '{}'".format(opt.checkpoint))
-            netG.load_state_dict(torch.load(opt.checkpoint, map_location=lambda storage, loc: storage))
-            print("=> loaded checkpoint '{}'".format(opt.checkpoint))
+        task_label = "foolrat" if opt.target == -1 else "top1target"
+        net_g_model_out_path = opt.expname + "/netG_model_epoch_{}_".format(opt.nEpochs) + task_label + "_{}.pth".format(
+            opt.target)
+        if os.path.isfile(net_g_model_out_path):
+            print("=> loading checkpoint '{}'".format(net_g_model_out_path))
+            netG.load_state_dict(torch.load(net_g_model_out_path, map_location=lambda storage, loc: storage))
+            print("=> loaded checkpoint '{}'".format(net_g_model_out_path))
         else:
-            print("=> no checkpoint found at '{}'".format(opt.checkpoint))
+            print("=> no checkpoint found at '{}'".format(net_g_model_out_path))
             netG.apply(weights_init)
     else:
         netG.apply(weights_init)
@@ -323,7 +334,8 @@ def checkpoint_dict(epoch):
 
     task_label = "foolrat" if opt.target == -1 else "top1target"
 
-    net_g_model_out_path = opt.expname + "/netG_model_epoch_{}_".format(epoch) + task_label + "_{}.pth".format(test_fooling_history[epoch-1])
+    #net_g_model_out_path = opt.expname + "/netG_model_epoch_{}_".format(epoch) + task_label + "_{}.pth".format(test_fooling_history[epoch-1])
+    net_g_model_out_path = opt.expname + "/netG_model_epoch_{}_".format(epoch) + task_label + "_{}.pth".format(opt.target)
     if opt.perturbation_type == 'universal':
         u_out_path = opt.expname + "/U_out/U_epoch_{}_".format(epoch) + task_label + "_{}.pth".format(test_fooling_history[epoch-1])
     if test_fooling_history[epoch-1] > best_fooling:
@@ -370,8 +382,8 @@ if opt.mode == 'train':
         print('Testing....')
         test()
         checkpoint_dict(epoch)
-    print_history()
+    #print_history()
 elif opt.mode == 'test':
     print('Testing...')
     test()
-    print_history()
+    #print_history()
