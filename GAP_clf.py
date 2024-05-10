@@ -11,11 +11,14 @@ import torch.optim as optim
 from torch.utils.data import DataLoader
 #from models import ResnetGenerator, weights_init
 from material.models.generators import ResnetGenerator, weights_init
-from data import get_training_set, get_test_set
+from data import *
 import torch.backends.cudnn as cudnn
 import math
 import torchvision.transforms as transforms
 import numpy as np
+
+import warnings
+warnings.filterwarnings("ignore")
 
 torch.autograd.set_detect_anomaly(True)
 
@@ -42,6 +45,7 @@ parser.add_argument('--expname', type=str, default='tempname', help='experiment 
 parser.add_argument('--checkpoint', type=str, default='', help='path to starting checkpoint')
 parser.add_argument('--foolmodel', type=str,
                     default='resent50', help='model to fool: "resent50", "incv3", "vgg16", or "vgg19"')
+parser.add_argument('--model_in', type=str)
 parser.add_argument('--mode', type=str, default='train', help='mode: "train" or "test"')
 parser.add_argument('--perturbation_type', type=str, help='"universal" or "imdep" (image dependent)')
 parser.add_argument('--target', type=int,
@@ -52,7 +56,13 @@ parser.add_argument('--path_to_U_noise', type=str,
 parser.add_argument('--explicit_U', type=str, default='', help='Path to a universal perturbation to use')
 opt = parser.parse_args()
 
-print(opt)
+PRINT_DETAILS=False
+
+if PRINT_DETAILS:
+    print(opt)
+
+
+
 
 #if not torch.cuda.is_available():
 #    raise Exception("No GPU found.")
@@ -104,17 +114,32 @@ if opt.mode == 'train':
     train_set = torchvision.datasets.ImageFolder(root = opt.imagenetTrain, transform = data_transform)
     training_data_loader = DataLoader(dataset=train_set, num_workers=opt.threads, batch_size=opt.batchSize, shuffle=True)
 
+_, data_test = get_data('imagenet')
+testing_data_loader = torch.utils.data.DataLoader(data_test,
+                                                  batch_size=opt.testBatchSize,
+                                                  shuffle=False,
+                                                  num_workers=4,
+                                                  pin_memory=True)
+
+'''
 test_set = torchvision.datasets.ImageFolder(root = opt.imagenetVal, transform = data_transform)
 testing_data_loader = DataLoader(dataset=test_set, num_workers=opt.threads, batch_size=opt.testBatchSize, shuffle=True)
+'''
 
-if opt.foolmodel == 'incv3':
-    pretrained_clf = torchvision.models.inception_v3(pretrained=True)
-elif opt.foolmodel == 'vgg16':
-    pretrained_clf = torchvision.models.vgg16(pretrained=True)
-elif opt.foolmodel == 'vgg19':
-    pretrained_clf = torchvision.models.vgg19(pretrained=True)
-elif opt.foolmodel == 'resnet50':
-    pretrained_clf = torchvision.models.resnet50(pretrained=True)
+if opt.model_in:
+    model_fn = opt.expname + '/' + str(opt.model_in)
+    pretrained_clf = torch.load(model_fn, map_location=torch.device('cpu'))
+    print('model loaded: {}'.format(model_fn))
+else:
+    if opt.foolmodel == 'incv3':
+        pretrained_clf = torchvision.models.inception_v3(pretrained=True)
+    elif opt.foolmodel == 'vgg16':
+        pretrained_clf = torchvision.models.vgg16(pretrained=True)
+    elif opt.foolmodel == 'vgg19':
+        pretrained_clf = torchvision.models.vgg19(pretrained=True)
+    elif opt.foolmodel == 'resnet50':
+        pretrained_clf = torchvision.models.resnet50(pretrained=True)
+    print('pretrained model loaded')
 
 pretrained_clf = pretrained_clf.cuda(gpulist[0])
 
@@ -224,7 +249,8 @@ def train(epoch):
         optimizerG.step()
 
         train_loss_history.append(loss.item())
-        print("===> Epoch[{}]({}/{}) loss: {:.4f}".format(epoch, itr, len(training_data_loader), loss.item()))
+        if PRINT_DETAILS:
+            print("===> Epoch[{}]({}/{}) loss: {:.4f}".format(epoch, itr, len(training_data_loader), loss.item()))
 
 
 def test():
@@ -273,7 +299,7 @@ def test():
         else:
             fooled += (predicted_recon == opt.target).sum()
 
-        if itr % 50 == 1:
+        if itr % 50 == 1 and PRINT_DETAILS:
             print('Images evaluated:', (itr*opt.testBatchSize))
             # undo normalize image color channels
             delta_im_temp = torch.zeros(delta_im.size())
