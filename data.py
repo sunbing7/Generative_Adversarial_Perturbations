@@ -6,6 +6,7 @@ from config import *
 import torchvision.datasets as dset
 import numpy as np
 import torch
+from data_sat import *
 
 
 def get_training_set(root_dir):
@@ -60,6 +61,12 @@ def get_data_specs(pretrained_dataset):
         num_classes = 29
         input_size = 200
         num_channels = 3
+    elif pretrained_dataset == 'eurosat':
+        mean = [0.3442, 0.3801, 0.4077]
+        std = [0.2025, 0.1368, 0.1156]
+        num_classes = 10
+        input_size = 64
+        num_channels = 3
     else:
         raise ValueError
     return num_classes, (mean, std), input_size, num_channels
@@ -94,90 +101,31 @@ def get_data(dataset):
         test_data = torch.utils.data.Subset(full_val, index_test)
         #print('test size {} train size {}'.format(len(test_data), len(train_data)))
 
-    elif dataset == "coco":
-        train_transform = transforms.Compose([
-            transforms.Resize(int(input_size * 1.143)),
-            transforms.RandomCrop(input_size),
-            transforms.ToTensor(),
-            transforms.Normalize(mean, std)])
-
-        test_transform = transforms.Compose([
-            transforms.Resize(int(input_size * 1.143)),
-            transforms.CenterCrop(input_size),
-            transforms.ToTensor(),
-            transforms.Normalize(mean, std)])
-
-        train_data = dset.CocoDetection(root=COCO_2017_TRAIN_IMGS,
-                                        annFile=COCO_2017_TRAIN_ANN,
-                                        transform=train_transform)
-        test_data = dset.CocoDetection(root=COCO_2017_VAL_IMGS,
-                                       annFile=COCO_2017_VAL_ANN,
-                                       transform=test_transform)
-
-    elif dataset == "voc":
-        train_transform = transforms.Compose([
-            transforms.ToPILImage(),
-            transforms.Resize(int(input_size * 1.143)),
-            transforms.RandomCrop(input_size),
-            transforms.ToTensor(),
-            transforms.Normalize(mean, std)])
-
-        test_transform = transforms.Compose([
-            transforms.ToPILImage(),
-            transforms.Resize(int(input_size * 1.143)),
-            transforms.CenterCrop(input_size),
-            transforms.ToTensor(),
-            transforms.Normalize(mean, std)])
-
-        train_data = VOCDetection(root=VOC_2012_ROOT,
-                                  year="2012",
-                                  image_set='train',
-                                  transform=train_transform)
-        test_data = VOCDetection(root=VOC_2012_ROOT,
-                                 year="2012",
-                                 image_set='val',
-                                 transform=test_transform)
-
-    elif dataset == "places365":
-        traindir = os.path.join(PLACES365_ROOT, "train")
-        testdir = os.path.join(PLACES365_ROOT, "train")
-        # Places365 downloaded as 224x224 images
-
-        train_transform = transforms.Compose([
-            transforms.Resize(input_size),  # Places images downloaded as 224
-            transforms.RandomCrop(input_size),
-            transforms.ToTensor(),
-            transforms.Normalize(mean, std)])
-
-        test_transform = transforms.Compose([
-            transforms.Resize(input_size),
-            transforms.CenterCrop(input_size),
-            transforms.ToTensor(),
-            transforms.Normalize(mean, std)])
-
-        train_data = dset.ImageFolder(root=traindir, transform=train_transform)
-        test_data = dset.ImageFolder(root=testdir, transform=test_transform)
     elif dataset == 'caltech':
         traindir = os.path.join(CALTECH_PATH, "train")
         testdir = os.path.join(CALTECH_PATH, "test")
 
         train_transform = transforms.Compose([
-            transforms.Resize(input_size),
-            transforms.RandomCrop(input_size),
             transforms.ToTensor(),
+            transforms.RandomResizedCrop(size=256, scale=(0.8, 1.0)),
+            transforms.RandomRotation(degrees=15),
+            transforms.RandomHorizontalFlip(),
+            transforms.CenterCrop(size=input_size),
             transforms.Normalize(mean, std)])
 
         test_transform = transforms.Compose([
-            transforms.Resize(input_size),
+            transforms.Resize(256),
             transforms.CenterCrop(input_size),
             transforms.ToTensor(),
             transforms.Normalize(mean, std)])
 
         train_data_full = dset.ImageFolder(root=traindir, transform=train_transform)
         train_data = torch.utils.data.Subset(train_data_full, np.random.choice(len(train_data_full),
-                                                                               size=int(0.05 * len(train_data_full)),
-                                                                               replace=False))
+                                             size=int(0.5 * len(train_data_full)), replace=False))
+        #train_data = train_data_full
         test_data = dset.ImageFolder(root=testdir, transform=test_transform)
+        print('[DEBUG] caltech train len: {}'.format(len(train_data)))
+        print('[DEBUG] caltech test len: {}'.format(len(test_data)))
     elif dataset == 'asl':
         traindir = os.path.join(ASL_PATH, "train")
         testdir = os.path.join(ASL_PATH, "test")
@@ -196,9 +144,33 @@ def get_data(dataset):
 
         train_data_full = dset.ImageFolder(root=traindir, transform=train_transform)
         train_data = torch.utils.data.Subset(train_data_full, np.random.choice(len(train_data_full),
-                                                                               size=int(0.05 * len(train_data_full)),
-                                                                               replace=False))
+                                             size=int(0.5 * len(train_data_full)), replace=False))
         test_data = dset.ImageFolder(root=testdir, transform=test_transform)
+        print('[DEBUG] asl train len: {}'.format(len(train_data_full)))
+        print('[DEBUG] asl test len: {}'.format(len(test_data)))
+
+    elif dataset == 'eurosat':
+        train_transform = transforms.Compose([
+            transforms.RandomHorizontalFlip(),
+            transforms.RandomVerticalFlip(),
+            transforms.RandomRotation(degrees=15),
+            transforms.ToTensor(),
+            transforms.Normalize(mean, std)])
+
+
+        test_transform = transforms.Compose([
+            transforms.ToTensor(),
+            transforms.Normalize(mean, std)])
+
+        train_dataset = EuroSAT(transform=train_transform)
+
+        test_dataset = EuroSAT(transform=test_transform)
+
+        trainval, _ = random_split(train_dataset, 0.9, random_state=42)
+        train_data, _ = random_split(trainval, 0.9, random_state=7)
+        _, test_data = random_split(test_dataset, 0.9, random_state=42)
+        print('[DEBUG] train len: {}'.format(len(train_data)))
+        print('[DEBUG] test len: {}'.format(len(test_data)))
     return train_data, test_data
 
 

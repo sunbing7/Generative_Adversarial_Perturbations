@@ -17,6 +17,9 @@ import math
 import torchvision.transforms as transforms
 import numpy as np
 
+from networks.network import *
+from collections import OrderedDict
+
 import warnings
 warnings.filterwarnings("ignore")
 
@@ -24,6 +27,8 @@ torch.autograd.set_detect_anomaly(True)
 
 # Training settings
 parser = argparse.ArgumentParser(description='generative adversarial perturbations')
+parser.add_argument('--dataset', type=str,
+                    default='imagenet', help='dataset')
 parser.add_argument('--imagenetTrain', type=str,
                     default='/nfs01/data/imagenet-original/ILSVRC2012_img_train_caffemapping',
                     help='ImageNet train root')
@@ -44,7 +49,8 @@ parser.add_argument('--mag_in', type=float, default=10.0, help='l_inf magnitude 
 parser.add_argument('--expname', type=str, default='tempname', help='experiment name, output folder')
 parser.add_argument('--checkpoint', type=str, default='', help='path to starting checkpoint')
 parser.add_argument('--foolmodel', type=str,
-                    default='resent50', help='model to fool: "resent50", "incv3", "vgg16", or "vgg19"')
+                    default='resent50',
+                    help='model to fool: "resent50", "incv3", "googlenet", "mobilenet", "shufflenetv2", "vgg16", or "vgg19"')
 parser.add_argument('--model_in', type=str)
 parser.add_argument('--mode', type=str, default='train', help='mode: "train" or "test"')
 parser.add_argument('--perturbation_type', type=str, help='"universal" or "imdep" (image dependent)')
@@ -57,6 +63,7 @@ parser.add_argument('--explicit_U', type=str, default='', help='Path to a univer
 opt = parser.parse_args()
 
 PRINT_DETAILS=False
+PRINT_TEST_RESULT=True
 
 if PRINT_DETAILS:
     print(opt)
@@ -110,38 +117,71 @@ data_transform = transforms.Compose([
 
 print('===> Loading datasets')
 
-if opt.mode == 'train':
+if opt.mode == 'train' and opt.dataset == 'imagenet':
     train_set = torchvision.datasets.ImageFolder(root = opt.imagenetTrain, transform = data_transform)
     training_data_loader = DataLoader(dataset=train_set, num_workers=opt.threads, batch_size=opt.batchSize, shuffle=True)
 
-_, data_test = get_data('imagenet')
-testing_data_loader = torch.utils.data.DataLoader(data_test,
-                                                  batch_size=opt.testBatchSize,
-                                                  shuffle=False,
-                                                  num_workers=4,
-                                                  pin_memory=True)
+    _, data_test = get_data(opt.dataset)
+    testing_data_loader = torch.utils.data.DataLoader(data_test,
+                                                      batch_size=opt.testBatchSize,
+                                                      shuffle=False,
+                                                      num_workers=4,
+                                                      pin_memory=True)
+else:
+    data_train, data_test = get_data(opt.dataset)
+    training_data_loader = torch.utils.data.DataLoader(data_test,
+                                                      batch_size=opt.batchSize,
+                                                      shuffle=True,
+                                                      num_workers=4,
+                                                      pin_memory=True)
+
+    testing_data_loader = torch.utils.data.DataLoader(data_test,
+                                                      batch_size=opt.testBatchSize,
+                                                      shuffle=False,
+                                                      num_workers=4,
+                                                      pin_memory=True)
+
 
 '''
 test_set = torchvision.datasets.ImageFolder(root = opt.imagenetVal, transform = data_transform)
 testing_data_loader = DataLoader(dataset=test_set, num_workers=opt.threads, batch_size=opt.testBatchSize, shuffle=True)
 '''
+# Init model, criterion, and optimizer
 
-if opt.model_in:
-    model_fn = opt.expname + '/' + str(opt.model_in)
-    pretrained_clf = torch.load(model_fn, map_location=torch.device('cpu'))
-    print('model loaded: {}'.format(model_fn))
-else:
-    if opt.foolmodel == 'incv3':
-        pretrained_clf = torchvision.models.inception_v3(pretrained=True)
-    elif opt.foolmodel == 'vgg16':
-        pretrained_clf = torchvision.models.vgg16(pretrained=True)
-    elif opt.foolmodel == 'vgg19':
-        pretrained_clf = torchvision.models.vgg19(pretrained=True)
-    elif opt.foolmodel == 'resnet50':
-        pretrained_clf = torchvision.models.resnet50(pretrained=True)
-    print('pretrained model loaded')
+# get a path for loading the model to be attacked
+model_path = './trained_models'
+model_weights_path = os.path.join(model_path, opt.model_in)
+num_classes, (mean_arr, stddev_arr), input_size, num_channels = get_data_specs(opt.dataset)
 
-pretrained_clf = pretrained_clf.cuda(gpulist[0])
+center_crop = input_size
+
+target_network = get_network(opt.foolmodel,
+                             input_size=input_size,
+                             num_classes=num_classes,
+                             finetune=False)
+
+if opt.dataset == "caltech" or opt.dataset == 'asl':
+    if 'repaired' in opt.model_in:
+        target_network = torch.load(model_weights_path, map_location=torch.device('cpu'))
+    else:
+        #state dict
+        orig_state_dict = torch.load(model_weights_path, map_location=torch.device('cpu'))
+        new_state_dict = OrderedDict()
+        for k, v in target_network.state_dict().items():
+            if k in orig_state_dict.keys():
+                new_state_dict[k] = orig_state_dict[k]
+
+        target_network.load_state_dict(new_state_dict)
+
+elif opt.dataset == 'eurosat':
+    target_network = torch.load(model_weights_path, map_location=torch.device('cpu'))
+elif opt.dataset == "imagenet" and 'repaired' in opt.model_in:
+    target_network = torch.load(model_weights_path, map_location=torch.device('cpu'))
+
+
+target_network = torch.nn.DataParallel(target_network)
+
+pretrained_clf = target_network.cuda(gpulist[0])
 
 pretrained_clf.eval()
 pretrained_clf.volatile = True
@@ -182,7 +222,7 @@ if not opt.explicit_U:
     # fixed noise for universal perturbation
     if opt.perturbation_type == 'universal':
         noise_data = np.random.uniform(0, 255, center_crop * center_crop * 3)
-        if opt.checkpoint:
+        if opt.checkpoint and 'repaired' in opt.checkpoint:
             if opt.path_to_U_noise:
                 noise_data = np.loadtxt(opt.path_to_U_noise)
                 np.savetxt(opt.expname + '/U_input_noise.txt', noise_data)
@@ -206,7 +246,8 @@ def train(epoch):
     for itr, (image, _) in enumerate(training_data_loader, 1):
         if itr > MaxIter:
             break
-
+        if itr == 34:
+            tst = 1
         if opt.target == -1:
             # least likely class in nontargeted case
             pretrained_label_float = pretrained_clf(image.cuda(gpulist[0]))
@@ -231,7 +272,7 @@ def train(epoch):
             delta_im = netG(image)
 
         delta_im = normalize_and_scale(delta_im, 'train')
-
+        delta_im = delta_im[:len(image)]
         netG.zero_grad()
 
         recons = torch.add(image.cuda(gpulist[0]), delta_im.cuda(gpulist[0]))
@@ -249,8 +290,8 @@ def train(epoch):
         optimizerG.step()
 
         train_loss_history.append(loss.item())
-        if PRINT_DETAILS:
-            print("===> Epoch[{}]({}/{}) loss: {:.4f}".format(epoch, itr, len(training_data_loader), loss.item()))
+        #if PRINT_DETAILS:
+        #    print("===> Epoch[{}]({}/{}) loss: {:.4f}".format(epoch, itr, len(training_data_loader), loss.item()))
 
 
 def test():
@@ -279,7 +320,7 @@ def test():
         if opt.perturbation_type == 'imdep':
             delta_im = netG(image)
             delta_im = normalize_and_scale(delta_im, 'test')
-
+        delta_im = delta_im[:len(image)]
         recons = torch.add(image.cuda(gpulist[0]), delta_im[0:image.size(0)].cuda(gpulist[0]))
 
         # do clamping per channel
@@ -320,8 +361,9 @@ def test():
 
     test_acc_history.append((100.0 * correct_recon / total))
     test_fooling_history.append((100.0 * fooled / total))
-    print('Accuracy of the pretrained network on reconstructed images: %.2f%%' % (100.0 * float(correct_recon) / float(total)))
-    print('Accuracy of the pretrained network on original images: %.2f%%' % (100.0 * float(correct_orig) / float(total)))
+    if PRINT_TEST_RESULT:
+        print('Accuracy of the pretrained network on reconstructed images: %.2f%%' % (100.0 * float(correct_recon) / float(total)))
+        print('Accuracy of the pretrained network on original images: %.2f%%' % (100.0 * float(correct_orig) / float(total)))
     if opt.target == -1:
         print('Fooling ratio: %.2f%%' % (100.0 * float(fooled) / float(total)))
     else:
@@ -404,12 +446,16 @@ def print_history():
 
 if opt.mode == 'train':
     for epoch in range(1, opt.nEpochs + 1):
+        PRINT_TEST_RESULT = False
         train(epoch)
-        print('Testing....')
+        if epoch == opt.nEpochs:
+            print('Testing....')
+            PRINT_TEST_RESULT = True
         test()
         checkpoint_dict(epoch)
     #print_history()
 elif opt.mode == 'test':
     print('Testing...')
+    PRINT_TEST_RESULT = True
     test()
     #print_history()
