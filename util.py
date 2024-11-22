@@ -2,7 +2,12 @@ import numpy as np
 #from scipy.misc import imread, imresize, imsave
 import imageio
 import torch
+import os, sys, time, random
+import torch
+import json
+import numpy as np
 
+from config import RESULT_PATH, MODEL_PATH, PROJECT_PATH, UAP_PATH, NEURON_PATH, ATTRIBUTION_PATH
 
 def is_image_file(filename):
     return any(filename.endswith(extension) for extension in [".png", ".jpg", ".jpeg"])
@@ -63,4 +68,11 @@ def deprocess_img(img):
 
     return img
 
+def get_model_path(dataset_name, network_arch, random_seed):
+    if not os.path.isdir(MODEL_PATH):
+        os.makedirs(MODEL_PATH)
+    model_path = os.path.join(MODEL_PATH, "{}_{}_{}".format(dataset_name, network_arch, random_seed))
+    if not os.path.isdir(model_path):
+        os.makedirs(model_path)
+    return model_path
 

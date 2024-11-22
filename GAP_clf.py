@@ -16,6 +16,7 @@ import torch.backends.cudnn as cudnn
 import math
 import torchvision.transforms as transforms
 import numpy as np
+from util import get_model_path
 
 from networks.network import *
 from collections import OrderedDict
@@ -149,7 +150,10 @@ testing_data_loader = DataLoader(dataset=test_set, num_workers=opt.threads, batc
 # Init model, criterion, and optimizer
 
 # get a path for loading the model to be attacked
-model_path = './trained_models'
+# model_path = './trained_models'
+model_path = get_model_path(dataset_name=opt.dataset,
+                            network_arch=opt.foolmodel,
+                            random_seed=123)
 model_weights_path = os.path.join(model_path, opt.model_in)
 num_classes, (mean_arr, stddev_arr), input_size, num_channels = get_data_specs(opt.dataset)
 
@@ -222,7 +226,7 @@ if not opt.explicit_U:
     # fixed noise for universal perturbation
     if opt.perturbation_type == 'universal':
         noise_data = np.random.uniform(0, 255, center_crop * center_crop * 3)
-        if opt.checkpoint and 'repaired' in opt.checkpoint:
+        if opt.checkpoint:# and 'repaired' in opt.checkpoint:
             if opt.path_to_U_noise:
                 noise_data = np.loadtxt(opt.path_to_U_noise)
                 np.savetxt(opt.expname + '/U_input_noise.txt', noise_data)
